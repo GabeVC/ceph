@@ -11,6 +11,7 @@ import errno
 import hashlib
 import json
 import rbd
+import subprocess
 import requests
 import uuid
 import time
@@ -72,6 +73,8 @@ class Collection(str, enum.Enum):
     perf_memory_metrics = 'perf_memory_metrics'
     basic_pool_options_bluestore = 'basic_pool_options_bluestore'
     basic_pool_flags = 'basic_pool_flags'
+    osd_op_queue = 'osd_op_queue'
+    osd_memory_target = 'osd_memory_target'
 
 MODULE_COLLECTION : List[Dict] = [
     {
@@ -146,6 +149,19 @@ MODULE_COLLECTION : List[Dict] = [
         "channel": "basic",
         "nag": False
     },
+    {
+        "name": Collection.osd_op_queue,
+        "description": "OSD op queue stats",
+        "channel": "basic",
+        "nag": False
+    },
+    {
+        "name": Collection.osd_memory_target,
+        "description": "osd memory target",
+        "channel": "basic",
+        "nag": False
+    }
+
 ]
 
 ROOK_KEYS_BY_COLLECTION : List[Tuple[str, Collection]] = [
@@ -352,6 +368,82 @@ class Module(MgrModule):
 
         return metadata
 
+    def gather_osd_op_queue_values(self) -> Dict[str, Any]:
+        self.log.debug("Collecting osd_op_queue values for all OSDs")
+
+        result = {
+            'osd_op_queues': {}
+        }
+
+        for osd_id in range(3):
+            try:
+                cmd = ['ceph', 'config', 'get', f'osd.{osd_id}', 'osd_op_queue']
+                output = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=10
+                )
+
+                if output.stdout:
+                    value = output.stdout.strip()
+                    try:
+                        value_data = json.loads(value)
+                        if isinstance(value_data, dict):
+                            value = value_data.get('osd_op_queue')
+                        else:
+                            value = value_data
+                    except json.JSONDecodeError:
+                        pass
+
+                    if value:
+                        result['osd_op_queues'][f'osd_{osd_id}'] = value
+
+            except Exception as e:
+                self.log.error(f"Error collecting queue settings for osd.{osd_id}: {str(e)}")
+
+        return result
+
+    def gather_osd_memory_target_values(self) -> Dict[str, Any]:
+        self.log.debug("Collecting osd_memory_target values for all OSDs")
+
+        result = {
+            'osd_memory_target': {}
+        }
+
+        for osd_id in range(3):
+            try:
+                cmd = ['ceph', 'config', 'get', f'osd.{osd_id}', 'osd_memory_target']
+                output = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=10
+                )
+
+                if output.stdout:
+                    value = output.stdout.strip()
+                    try:
+                        value_data = json.loads(value)
+                        if isinstance(value_data, dict):
+                            value = value_data.get('osd_memory_target')
+                        else:
+                            value = value_data
+                        # Convert to integer if possible
+                        value = int(value) if value else None
+                    except (json.JSONDecodeError, ValueError):
+                        value = None
+
+                    if value is not None:
+                        result['osd_memory_target'][f'osd_{osd_id}'] = value
+
+            except Exception as e:
+                self.log.error(f"Error collecting memory settings for osd.{osd_id}: {str(e)}")
+
+        return result
+    
     def gather_mon_metadata(self,
                             mon_map: Dict[str, List[Dict[str, str]]]) -> Dict[str, Dict[str, int]]:
         keys = list()
@@ -1173,6 +1265,9 @@ class Module(MgrModule):
                 'require_min_compat_client': osd_map['require_min_compat_client'],
                 'cluster_network': cluster_network,
             }
+            report['osd_op_queues'] = dict(self.gather_osd_op_queue_values())
+
+            report['osd_memory_target'] = dict(self.gather_osd_memory_target_values())
 
             # crush
             report['crush'] = self.gather_crush_info()
