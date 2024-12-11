@@ -503,6 +503,63 @@ class Module(MgrModule):
 
         self.log.info(f"Completed OSD queue collection. Success rate: {result['collection_metadata']['collection_rate']:.2%}")
         return result
+    
+    def _get_osd_queue_config(self, osd_id: int) -> Optional[str]:
+        """Get basic queue configuration for an OSD"""
+        cmd = ['ceph', 'config', 'get', f'osd.{osd_id}', 'osd_op_queue']
+        try:
+            output = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10
+            )
+            return output.stdout.strip() if output.stdout else None
+        except Exception as e:
+            self.log.error(f"Error getting queue config for osd.{osd_id}: {str(e)}")
+            return None
+
+    def _get_mclock_params(self, osd_id: int) -> Dict[str, Any]:
+        """Collect mclock specific parameters"""
+        params = {}
+        mclock_params = [
+            'osd_mclock_max_capacity_iops',
+            'osd_mclock_min_cost',
+            'osd_mclock_max_capacity_bytes_per_sec',
+            'osd_mclock_profile'
+        ]
+        
+        for param in mclock_params:
+            try:
+                cmd = ['ceph', 'config', 'get', f'osd.{osd_id}', param]
+                output = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=5)
+                if output.stdout:
+                    params[param] = output.stdout.strip()
+            except Exception as e:
+                self.log.warning(f"Failed to get {param} for osd.{osd_id}: {str(e)}")
+        
+        return params
+
+    def _get_wpq_params(self, osd_id: int) -> Dict[str, Any]:
+        """Collect weighted priority queue specific parameters"""
+        params = {}
+        wpq_params = [
+            'osd_wpq_high_priority_weight',
+            'osd_wpq_medium_priority_weight',
+            'osd_wpq_low_priority_weight'
+        ]
+        
+        for param in wpq_params:
+            try:
+                cmd = ['ceph', 'config', 'get', f'osd.{osd_id}', param]
+                output = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=5)
+                if output.stdout:
+                    params[param] = output.stdout.strip()
+            except Exception as e:
+                self.log.warning(f"Failed to get {param} for osd.{osd_id}: {str(e)}")
+        
+        return params
             
     def gather_osd_memory_target_values(self, osd_id: int) -> Dict[str, Any]:
         self.log.debug("Collecting osd_memory_target values for all OSDs")
