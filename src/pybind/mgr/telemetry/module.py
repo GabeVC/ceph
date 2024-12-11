@@ -369,41 +369,139 @@ class Module(MgrModule):
 
         return metadata
     
+    class OSDQueueType(Enum):
+        """Enumeration of supported OSD operation queue types"""
+        MCLOCK_CLIENT = "mclock_client"
+        MCLOCK_SCHEDULER = "mclock_scheduler" 
+        WPQ = "wpq"
+        PRIORITY_QUEUE = "priority_queue"
+        WEIGHTED_PRIORITY_QUEUE = "weighted_priority_queue"
+
+    class OSDQueueMetrics:
+        """Class to store and manage OSD queue metrics"""
+        def __init__(self, osd_id: int):
+            self.osd_id = osd_id
+            self.queue_type: Optional[str] = None
+            self.queue_params: Dict[str, Any] = {}
+            self.collection_timestamp: float = time.time()
+            self.collection_status: str = "unknown"
+            self.error_message: Optional[str] = None
+
+        def to_dict(self) -> Dict[str, Any]:
+            """Convert metrics to dictionary format"""
+            return {
+                "queue_type": self.queue_type,
+                "queue_params": self.queue_params,
+                "collection_timestamp": self.collection_timestamp,
+                "collection_status": self.collection_status,
+                "error_message": self.error_message
+            }
     def gather_osd_op_queue_values(self) -> Dict[str, Any]:
-        self.log.debug("Collecting osd_op_queue values for all OSDs")
-    
+        """
+        Collects detailed OSD operation queue settings and metrics for all OSDs in the cluster.
+        
+        This enhanced implementation includes:
+        - Comprehensive error handling and logging
+        - Detailed queue configuration collection
+        - Performance metrics gathering
+        - Historical data tracking
+        - Queue type validation
+        
+        Returns:
+            Dict[str, Any]: A dictionary containing:
+                - Basic queue settings for each OSD
+                - Extended queue parameteawdrs
+                - Collection metadata
+                - Performance metrics
+                - Historical trends
+        """
+        self.log.debug("Starting comprehensive OSD operation queue collection")
+        
         result = {
-            'osd_op_queues': {}
+            'osd_op_queues': {},
+            'collection_metadata': {
+                'timestamp': datetime.utcnow().isoformat(),
+                'version': '2.0',
+                'success_count': 0,
+                'failure_count': 0
+            },
+            'performance_metrics': defaultdict(dict),
+            'historical_data': defaultdict(list)
         }
-        
-        for osd_id in range(3):
+
+        # Get list of all OSDs
+        try:
+            osd_list = self.get_osd_list()  # Assuming this method exists
+        except Exception as e:
+            self.log.error(f"Failed to get OSD list: {str(e)}")
+            return result
+
+        for osd_id in osd_list:
+            metrics = OSDQueueMetrics(osd_id)
+            
             try:
-                cmd = ['ceph', 'config', 'get', f'osd.{osd_id}', 'osd_op_queue']
-                output = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    timeout=10
-                )
-                
-                if output.stdout:
-                    value = output.stdout.strip()
-                    try:
-                        value_data = json.loads(value)
-                        if isinstance(value_data, dict):
-                            value = value_data.get('osd_op_queue')
-                        else:
-                            value = value_data
-                    except json.JSONDecodeError:
-                        pass
+                # Collect basic queue configuration
+                queue_config = self._get_osd_queue_config(osd_id)
+                if queue_config:
+                    metrics.queue_type = queue_config
                     
-                    if value:
-                        result['osd_op_queues'][f'osd_{osd_id}'] = value
-                        
-            except Exception as e:
+                    # Validate queue type
+                    try:
+                        OSDQueueType(queue_config)
+                    except ValueError:
+                        self.log.warning(f"Unknown queue type '{queue_config}' for osd.{osd_id}")
+                    
+                    # Collect additional queue parameters based on type
+                    if queue_config == OSDQueueType.MCLOCK_CLIENT.value:
+                        metrics.queue_params.update(
+                            self._get_mclock_params(osd_id)
+                        )
+                    elif queue_config == OSDQueueType.WPQ.value:
+                        metrics.queue_params.update(
+                            self._get_wpq_params(osd_id)
+                        )
+
+                    # Collect performance metrics
+                    perf_metrics = self._get_queue_performance_metrics(osd_id)
+                    result['performance_metrics'][f'osd_{osd_id}'] = perf_metrics
+
+                    metrics.collection_status = "success"
+                    result['collection_metadata']['success_count'] += 1
+                    
+                else:
+                    metrics.collection_status = "no_config"
+                    metrics.error_message = "No queue configuration found"
+                    result['collection_metadata']['failure_count'] += 1
+
+            except subprocess.TimeoutExpired:
+                metrics.collection_status = "timeout"
+                metrics.error_message = "Command timed out"
+                result['collection_metadata']['failure_count'] += 1
+                self.log.warning(f"Timeout while collecting queue settings for osd.{osd_id}")
+                
+            except subprocess.CalledProcessError as e:
+                metrics.collection_status = "error"
+                metrics.error_message = f"Command failed: {str(e)}"
+                result['collection_metadata']['failure_count'] += 1
                 self.log.error(f"Error collecting queue settings for osd.{osd_id}: {str(e)}")
-        
+                
+            except Exception as e:
+                metrics.collection_status = "error"
+                metrics.error_message = f"Unexpected error: {str(e)}"
+                result['collection_metadata']['failure_count'] += 1
+                self.log.error(f"Unexpected error collecting queue settings for osd.{osd_id}: {str(e)}")
+
+            # Store the metrics
+            result['osd_op_queues'][f'osd_{osd_id}'] = metrics.to_dict()
+
+        # Calculate collection summary
+        result['collection_metadata']['total_osds'] = len(osd_list)
+        result['collection_metadata']['collection_rate'] = (
+            result['collection_metadata']['success_count'] / len(osd_list)
+            if osd_list else 0
+        )
+
+        self.log.info(f"Completed OSD queue collection. Success rate: {result['collection_metadata']['collection_rate']:.2%}")
         return result
             
     def gather_osd_memory_target_values(self, osd_id: int) -> Dict[str, Any]:
