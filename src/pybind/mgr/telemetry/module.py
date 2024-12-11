@@ -16,9 +16,11 @@ import uuid
 import json 
 import time
 import subprocess
+import unittest
 from datetime import datetime, timedelta
 from prettytable import PrettyTable
 from threading import Event, Lock
+from unittest.mock import Mock, patch, MagicMock
 from collections import defaultdict
 from typing import cast, Any, DefaultDict, Dict, List, Optional, Tuple, TypeVar, TYPE_CHECKING, Union
 
@@ -396,6 +398,8 @@ class Module(MgrModule):
                 "collection_status": self.collection_status,
                 "error_message": self.error_message
             }
+            
+    
     def gather_osd_op_queue_values(self) -> Dict[str, Any]:
         """
         Collects detailed OSD operation queue settings and metrics for all OSDs in the cluster.
@@ -560,6 +564,78 @@ class Module(MgrModule):
                 self.log.warning(f"Failed to get {param} for osd.{osd_id}: {str(e)}")
         
         return params
+    
+    class TestOSDQueueCollection(unittest.TestCase):
+    """Test suite for OSD operation queue collection functionality"""
+    
+    def setUp(self):
+        """Set up test environment before each test"""
+        self.module = Mock()
+        self.module.log = Mock()
+        # Attach our enhanced methods to the mock module
+        self.module.gather_osd_op_queue_values = gather_osd_op_queue_values
+        self.module._get_osd_queue_config = _get_osd_queue_config
+        self.module._get_mclock_params = _get_mclock_params
+        self.module._get_wpq_params = _get_wpq_params
+        self.module._get_queue_performance_metrics = _get_queue_performance_metrics
+        
+        # Mock the get_osd_list method
+        self.module.get_osd_list = Mock(return_value=[0, 1, 2])
+
+    def test_successful_collection(self):
+        """Test successful collection of OSD queue data"""
+        with patch('subprocess.run') as mock_run:
+            # Mock successful subprocess calls
+            mock_run.return_value = Mock(
+                stdout='mclock_client\n',
+                stderr='',
+                returncode=0
+            )
+            
+            result = self.module.gather_osd_op_queue_values()
+            
+            # Verify basic structure of result
+            self.assertIn('osd_op_queues', result)
+            self.assertIn('collection_metadata', result)
+            self.assertIn('performance_metrics', result)
+            
+            # Verify collection metadata
+            metadata = result['collection_metadata']
+            self.assertEqual(metadata['success_count'], 3)
+            self.assertEqual(metadata['failure_count'], 0)
+            self.assertEqual(metadata['total_osds'], 3)
+            self.assertEqual(metadata['collection_rate'], 1.0)
+            
+            # Verify OSD queue data
+            self.assertEqual(len(result['osd_op_queues']), 3)
+            for osd_id in range(3):
+                osd_data = result['osd_op_queues'][f'osd_{osd_id}']
+                self.assertEqual(osd_data['queue_type'], 'mclock_client')
+                self.assertEqual(osd_data['collection_status'], 'success')
+
+    def test_partial_failure(self):
+        """Test collection with some OSDs failing"""
+        def mock_subprocess_run(*args, **kwargs):
+            """Mock subprocess that fails for specific OSD"""
+            cmd = args[0]
+            osd_id = int(cmd[3].split('.')[1])
+            if osd_id == 1:  # Fail for OSD.1
+                raise subprocess.CalledProcessError(1, cmd, "Error")
+            return Mock(stdout='wpq\n', stderr='', returncode=0)
+        
+        with patch('subprocess.run', side_effect=mock_subprocess_run):
+            result = self.module.gather_osd_op_queue_values()
+            
+            # Verify collection metadata reflects partial failure
+            metadata = result['collection_metadata']
+            self.assertEqual(metadata['success_count'], 2)
+            self.assertEqual(metadata['failure_count'], 1)
+            self.assertLess(metadata['collection_rate'], 1.0)
+            
+            # Verify failed OSD status
+            failed_osd = result['osd_op_queues']['osd_1']
+            self.assertEqual(failed_osd['collection_status'], 'error')
+            self.assertIn('error_message', failed_osd)
             
     def gather_osd_memory_target_values(self, osd_id: int) -> Dict[str, Any]:
         self.log.debug("Collecting osd_memory_target values for all OSDs")
