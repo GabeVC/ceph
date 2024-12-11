@@ -2482,12 +2482,23 @@ Please consider enabling the telemetry module with 'ceph telemetry on'.'''
     @CLIReadCommand('telemetry show-all')
     def show_all(self) -> Tuple[int, str, str]:
         '''
-        Show a sample report of all enabled channels (including 'device' channel)
+        Show a sample report of all enabled channels (including 'device' channel).
+
+        This function generates a sample telemetry report for all enabled channels. If telemetry is disabled,
+        it returns a message indicating that telemetry is off and suggests commands to opt-in or preview reports.
+        If the 'device' channel is disabled, it generates a report for the default channels. If the 'device' channel
+        is enabled, it generates a report for all channels.
+
+        Returns:
+            Tuple[int, str, str]: A tuple containing:
+                - An integer status code (0 for success).
+                - A string message or JSON report.
+                - An empty string (reserved for future use or additional information).
         '''
         if not self.enabled:
             # if telemetry is off, no report is being sent, hence nothing to show
             msg = 'Telemetry is off. Please consider opting-in with `ceph telemetry on`.\n' \
-                  'Preview sample reports with `ceph telemetry preview`.'
+                'Preview sample reports with `ceph telemetry preview`.'
             return 0, msg, ''
 
         if not self.channel_device:
@@ -2503,7 +2514,18 @@ Please consider enabling the telemetry module with 'ceph telemetry on'.'''
     @CLIReadCommand('telemetry preview-all')
     def preview_all(self) -> Tuple[int, str, str]:
         '''
-        Preview a sample report of the most recent collections available of all channels (including 'device')
+        Preview a sample report of the most recent collections available of all channels (including 'device').
+
+        This function generates a preview of the most recent telemetry collections for all channels. If the user
+        is already opted-in to the most recent collection, it returns a message indicating that telemetry is up to date.
+        Otherwise, it generates a report for the collections the user is not opted-in to and formats the performance
+        histogram.
+
+        Returns:
+            Tuple[int, str, str]: A tuple containing:
+                - An integer status code (0 for success).
+                - A string message or JSON report.
+                - An empty string (reserved for future use or additional information).
         '''
         report = {}
 
