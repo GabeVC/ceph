@@ -2643,6 +2643,24 @@ Please consider enabling the telemetry module with 'ceph telemetry on'.'''
         self.set_health_checks(health_checks)
 
     def serve(self) -> None:
+        '''
+        Start the telemetry service to compile and send reports at regular intervals.
+
+        This function initializes the telemetry service, waits for the manager to warm up, and then enters a loop
+        where it periodically compiles and sends telemetry reports. The loop continues running as long as the `run`
+        flag is set to True. The function checks if the user is opted-in and if telemetry is enabled before sending
+        reports. It also refreshes health checks and waits for a specified interval between sending reports.
+
+        The function handles exceptions during report compilation and logs relevant messages.
+
+        The loop waits for a specified interval (default 3600 seconds) before attempting to send the next report.
+
+        Args:
+            None
+
+        Returns:
+            None
+        '''
         self.load()
         self.run = True
 
@@ -2665,9 +2683,8 @@ Please consider enabling the telemetry module with 'ceph telemetry on'.'''
 
             now = int(time.time())
             if not self.last_upload or \
-               (now - self.last_upload) > self.interval * 3600:
-                self.log.info('Compiling and sending report to %s',
-                              self.url)
+            (now - self.last_upload) > self.interval * 3600:
+                self.log.info('Compiling and sending report to %s', self.url)
 
                 try:
                     self.last_report = self.compile_report()
