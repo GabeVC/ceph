@@ -617,186 +617,186 @@ class Module(MgrModule):
         return params
     
     class TestOSDQueueCollection(unittest.TestCase):
-    """Test suite for OSD operation queue collection functionality"""
+        """Test suite for OSD operation queue collection functionality"""
     
-    def setUp(self):
-        """Set up test environment before each test"""
-        self.module = Mock()
-        self.module.log = Mock()
-        # Attach our enhanced methods to the mock module
-        self.module.gather_osd_op_queue_values = gather_osd_op_queue_values
-        self.module._get_osd_queue_config = _get_osd_queue_config
-        self.module._get_mclock_params = _get_mclock_params
-        self.module._get_wpq_params = _get_wpq_params
-        self.module._get_queue_performance_metrics = _get_queue_performance_metrics
-        
-        # Mock the get_osd_list method
-        self.module.get_osd_list = Mock(return_value=[0, 1, 2])
+        def setUp(self):
+            """Set up test environment before each test"""
+            self.module = Mock()
+            self.module.log = Mock()
+            # Attach our enhanced methods to the mock module
+            self.module.gather_osd_op_queue_values = gather_osd_op_queue_values
+            self.module._get_osd_queue_config = _get_osd_queue_config
+            self.module._get_mclock_params = _get_mclock_params
+            self.module._get_wpq_params = _get_wpq_params
+            self.module._get_queue_performance_metrics = _get_queue_performance_metrics
+            
+            # Mock the get_osd_list method
+            self.module.get_osd_list = Mock(return_value=[0, 1, 2])
 
-    def test_successful_collection(self):
-        """Test successful collection of OSD queue data"""
-        with patch('subprocess.run') as mock_run:
-            # Mock successful subprocess calls
-            mock_run.return_value = Mock(
-                stdout='mclock_client\n',
-                stderr='',
-                returncode=0
-            )
-            
-            result = self.module.gather_osd_op_queue_values()
-            
-            # Verify basic structure of result
-            self.assertIn('osd_op_queues', result)
-            self.assertIn('collection_metadata', result)
-            self.assertIn('performance_metrics', result)
-            
-            # Verify collection metadata
-            metadata = result['collection_metadata']
-            self.assertEqual(metadata['success_count'], 3)
-            self.assertEqual(metadata['failure_count'], 0)
-            self.assertEqual(metadata['total_osds'], 3)
-            self.assertEqual(metadata['collection_rate'], 1.0)
-            
-            # Verify OSD queue data
-            self.assertEqual(len(result['osd_op_queues']), 3)
-            for osd_id in range(3):
-                osd_data = result['osd_op_queues'][f'osd_{osd_id}']
-                self.assertEqual(osd_data['queue_type'], 'mclock_client')
-                self.assertEqual(osd_data['collection_status'], 'success')
+        def test_successful_collection(self):
+            """Test successful collection of OSD queue data"""
+            with patch('subprocess.run') as mock_run:
+                # Mock successful subprocess calls
+                mock_run.return_value = Mock(
+                    stdout='mclock_client\n',
+                    stderr='',
+                    returncode=0
+                )
+                
+                result = self.module.gather_osd_op_queue_values()
+                
+                # Verify basic structure of result
+                self.assertIn('osd_op_queues', result)
+                self.assertIn('collection_metadata', result)
+                self.assertIn('performance_metrics', result)
+                
+                # Verify collection metadata
+                metadata = result['collection_metadata']
+                self.assertEqual(metadata['success_count'], 3)
+                self.assertEqual(metadata['failure_count'], 0)
+                self.assertEqual(metadata['total_osds'], 3)
+                self.assertEqual(metadata['collection_rate'], 1.0)
+                
+                # Verify OSD queue data
+                self.assertEqual(len(result['osd_op_queues']), 3)
+                for osd_id in range(3):
+                    osd_data = result['osd_op_queues'][f'osd_{osd_id}']
+                    self.assertEqual(osd_data['queue_type'], 'mclock_client')
+                    self.assertEqual(osd_data['collection_status'], 'success')
 
-    def test_partial_failure(self):
-        """Test collection with some OSDs failing"""
-        def mock_subprocess_run(*args, **kwargs):
-            """Mock subprocess that fails for specific OSD"""
-            cmd = args[0]
-            osd_id = int(cmd[3].split('.')[1])
-            if osd_id == 1:  # Fail for OSD.1
-                raise subprocess.CalledProcessError(1, cmd, "Error")
-            return Mock(stdout='wpq\n', stderr='', returncode=0)
-        
-        with patch('subprocess.run', side_effect=mock_subprocess_run):
-            result = self.module.gather_osd_op_queue_values()
-            
-            # Verify collection metadata reflects partial failure
-            metadata = result['collection_metadata']
-            self.assertEqual(metadata['success_count'], 2)
-            self.assertEqual(metadata['failure_count'], 1)
-            self.assertLess(metadata['collection_rate'], 1.0)
-            
-            # Verify failed OSD status
-            failed_osd = result['osd_op_queues']['osd_1']
-            self.assertEqual(failed_osd['collection_status'], 'error')
-            self.assertIn('error_message', failed_osd)
-    def test_timeout_handling(self):
-        """Test handling of timeout errors"""
-        with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('cmd', 10)):
-            result = self.module.gather_osd_op_queue_values()
-            
-            # Verify all collections failed due to timeout
-            metadata = result['collection_metadata']
-            self.assertEqual(metadata['success_count'], 0)
-            self.assertEqual(metadata['failure_count'], 3)
-            self.assertEqual(metadata['collection_rate'], 0.0)
-            
-            # Verify timeout status for each OSD
-            for osd_id in range(3):
-                osd_data = result['osd_op_queues'][f'osd_{osd_id}']
-                self.assertEqual(osd_data['collection_status'], 'timeout')
-
-    def test_mclock_params_collection(self):
-        """Test collection of mclock-specific parameters"""
-        def mock_subprocess_run(*args, **kwargs):
-            """Mock subprocess for mclock parameter collection"""
-            cmd = args[0]
-            if cmd[4] == 'osd_op_queue':
-                return Mock(stdout='mclock_client\n', stderr='', returncode=0)
-            elif cmd[4].startswith('osd_mclock'):
-                return Mock(stdout='100\n', stderr='', returncode=0)
-            return Mock(stdout='', stderr='', returncode=1)
-        
-        with patch('subprocess.run', side_effect=mock_subprocess_run):
-            result = self.module.gather_osd_op_queue_values()
-            
-            # Verify mclock parameters were collected
-            for osd_id in range(3):
-                osd_data = result['osd_op_queues'][f'osd_{osd_id}']
-                self.assertIn('queue_params', osd_data)
-                params = osd_data['queue_params']
-                self.assertIn('osd_mclock_max_capacity_iops', params)
-                self.assertIn('osd_mclock_profile', params)
-
-    def test_wpq_params_collection(self):
-        """Test collection of weighted priority queue parameters"""
-        def mock_subprocess_run(*args, **kwargs):
-            """Mock subprocess for WPQ parameter collection"""
-            cmd = args[0]
-            if cmd[4] == 'osd_op_queue':
+        def test_partial_failure(self):
+            """Test collection with some OSDs failing"""
+            def mock_subprocess_run(*args, **kwargs):
+                """Mock subprocess that fails for specific OSD"""
+                cmd = args[0]
+                osd_id = int(cmd[3].split('.')[1])
+                if osd_id == 1:  # Fail for OSD.1
+                    raise subprocess.CalledProcessError(1, cmd, "Error")
                 return Mock(stdout='wpq\n', stderr='', returncode=0)
-            elif cmd[4].startswith('osd_wpq'):
-                return Mock(stdout='50\n', stderr='', returncode=0)
-            return Mock(stdout='', stderr='', returncode=1)
-        
-        with patch('subprocess.run', side_effect=mock_subprocess_run):
-            result = self.module.gather_osd_op_queue_values()
             
-            # Verify WPQ parameters were collected
-            for osd_id in range(3):
-                osd_data = result['osd_op_queues'][f'osd_{osd_id}']
-                self.assertIn('queue_params', osd_data)
-                params = osd_data['queue_params']
-                self.assertIn('osd_wpq_high_priority_weight', params)
-                self.assertIn('osd_wpq_medium_priority_weight', params)
-     def test_invalid_queue_type(self):
-        """Test handling of invalid queue types"""
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = Mock(
-                stdout='invalid_queue_type\n',
-                stderr='',
-                returncode=0
-            )
-            
-            result = self.module.gather_osd_op_queue_values()
-            
-            # Verify warning was logged
-            self.module.log.warning.assert_called()
-            
-            # Verify queue type was still recorded despite being invalid
-            for osd_id in range(3):
-                osd_data = result['osd_op_queues'][f'osd_{osd_id}']
-                self.assertEqual(osd_data['queue_type'], 'invalid_queue_type')
+            with patch('subprocess.run', side_effect=mock_subprocess_run):
+                result = self.module.gather_osd_op_queue_values()
+                
+                # Verify collection metadata reflects partial failure
+                metadata = result['collection_metadata']
+                self.assertEqual(metadata['success_count'], 2)
+                self.assertEqual(metadata['failure_count'], 1)
+                self.assertLess(metadata['collection_rate'], 1.0)
+                
+                # Verify failed OSD status
+                failed_osd = result['osd_op_queues']['osd_1']
+                self.assertEqual(failed_osd['collection_status'], 'error')
+                self.assertIn('error_message', failed_osd)
+        def test_timeout_handling(self):
+            """Test handling of timeout errors"""
+            with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('cmd', 10)):
+                result = self.module.gather_osd_op_queue_values()
+                
+                # Verify all collections failed due to timeout
+                metadata = result['collection_metadata']
+                self.assertEqual(metadata['success_count'], 0)
+                self.assertEqual(metadata['failure_count'], 3)
+                self.assertEqual(metadata['collection_rate'], 0.0)
+                
+                # Verify timeout status for each OSD
+                for osd_id in range(3):
+                    osd_data = result['osd_op_queues'][f'osd_{osd_id}']
+                    self.assertEqual(osd_data['collection_status'], 'timeout')
 
-    def test_performance_metrics(self):
-        """Test collection of performance metrics"""
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = Mock(
-                stdout='mclock_client\n',
-                stderr='',
-                returncode=0
-            )
+        def test_mclock_params_collection(self):
+            """Test collection of mclock-specific parameters"""
+            def mock_subprocess_run(*args, **kwargs):
+                """Mock subprocess for mclock parameter collection"""
+                cmd = args[0]
+                if cmd[4] == 'osd_op_queue':
+                    return Mock(stdout='mclock_client\n', stderr='', returncode=0)
+                elif cmd[4].startswith('osd_mclock'):
+                    return Mock(stdout='100\n', stderr='', returncode=0)
+                return Mock(stdout='', stderr='', returncode=1)
+            
+            with patch('subprocess.run', side_effect=mock_subprocess_run):
+                result = self.module.gather_osd_op_queue_values()
+                
+                # Verify mclock parameters were collected
+                for osd_id in range(3):
+                    osd_data = result['osd_op_queues'][f'osd_{osd_id}']
+                    self.assertIn('queue_params', osd_data)
+                    params = osd_data['queue_params']
+                    self.assertIn('osd_mclock_max_capacity_iops', params)
+                    self.assertIn('osd_mclock_profile', params)
+
+        def test_wpq_params_collection(self):
+            """Test collection of weighted priority queue parameters"""
+            def mock_subprocess_run(*args, **kwargs):
+                """Mock subprocess for WPQ parameter collection"""
+                cmd = args[0]
+                if cmd[4] == 'osd_op_queue':
+                    return Mock(stdout='wpq\n', stderr='', returncode=0)
+                elif cmd[4].startswith('osd_wpq'):
+                    return Mock(stdout='50\n', stderr='', returncode=0)
+                return Mock(stdout='', stderr='', returncode=1)
+            
+            with patch('subprocess.run', side_effect=mock_subprocess_run):
+                result = self.module.gather_osd_op_queue_values()
+                
+                # Verify WPQ parameters were collected
+                for osd_id in range(3):
+                    osd_data = result['osd_op_queues'][f'osd_{osd_id}']
+                    self.assertIn('queue_params', osd_data)
+                    params = osd_data['queue_params']
+                    self.assertIn('osd_wpq_high_priority_weight', params)
+                    self.assertIn('osd_wpq_medium_priority_weight', params)
+        def test_invalid_queue_type(self):
+            """Test handling of invalid queue types"""
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value = Mock(
+                    stdout='invalid_queue_type\n',
+                    stderr='',
+                    returncode=0
+                )
+                
+                result = self.module.gather_osd_op_queue_values()
+                
+                # Verify warning was logged
+                self.module.log.warning.assert_called()
+                
+                # Verify queue type was still recorded despite being invalid
+                for osd_id in range(3):
+                    osd_data = result['osd_op_queues'][f'osd_{osd_id}']
+                    self.assertEqual(osd_data['queue_type'], 'invalid_queue_type')
+
+        def test_performance_metrics(self):
+            """Test collection of performance metrics"""
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value = Mock(
+                    stdout='mclock_client\n',
+                    stderr='',
+                    returncode=0
+                )
+                
+                result = self.module.gather_osd_op_queue_values()
+                
+                # Verify performance metrics structure
+                for osd_id in range(3):
+                    metrics = result['performance_metrics'][f'osd_{osd_id}']
+                    self.assertIn('queue_length', metrics)
+                    self.assertIn('average_wait_time', metrics)
+                    self.assertIn('throughput', metrics)
+                    self.assertIn('rejected_ops', metrics)
+
+        def test_empty_osd_list(self):
+            """Test behavior when no OSDs are present"""
+            self.module.get_osd_list.return_value = []
             
             result = self.module.gather_osd_op_queue_values()
             
-            # Verify performance metrics structure
-            for osd_id in range(3):
-                metrics = result['performance_metrics'][f'osd_{osd_id}']
-                self.assertIn('queue_length', metrics)
-                self.assertIn('average_wait_time', metrics)
-                self.assertIn('throughput', metrics)
-                self.assertIn('rejected_ops', metrics)
-
-    def test_empty_osd_list(self):
-        """Test behavior when no OSDs are present"""
-        self.module.get_osd_list.return_value = []
-        
-        result = self.module.gather_osd_op_queue_values()
-        
-        # Verify empty result structure
-        self.assertEqual(len(result['osd_op_queues']), 0)
-        self.assertEqual(result['collection_metadata']['total_osds'], 0)
-        self.assertEqual(result['collection_metadata']['success_count'], 0)
-        self.assertEqual(result['collection_metadata']['failure_count'], 0)
-        self.assertEqual(result['collection_metadata']['collection_rate'], 0)
-            
+            # Verify empty result structure
+            self.assertEqual(len(result['osd_op_queues']), 0)
+            self.assertEqual(result['collection_metadata']['total_osds'], 0)
+            self.assertEqual(result['collection_metadata']['success_count'], 0)
+            self.assertEqual(result['collection_metadata']['failure_count'], 0)
+            self.assertEqual(result['collection_metadata']['collection_rate'], 0)
+                
     def gather_osd_memory_target_values(self, osd_id: int) -> Dict[str, Any]:
         self.log.debug("Collecting osd_memory_target values for all OSDs")
     
@@ -2553,17 +2553,40 @@ Please consider enabling the telemetry module with 'ceph telemetry on'.'''
         return 0, report, ''
 
     def get_report_locked(self,
-                          report_type: str = 'default',
-                          channels: Optional[List[str]] = None) -> Dict[str, Any]:
+                      report_type: str = 'default',
+                      channels: Optional[List[str]] = None) -> Dict[str, Any]:
         '''
-        A wrapper around get_report to allow for compiling a report of the most recent module collections
+        A wrapper around get_report to allow for compiling a report of the most recent module collections.
+
+        This function acquires a lock before calling get_report to ensure thread safety when compiling
+        the report.
+
+        Args:
+            report_type (str): The type of report to generate. Defaults to 'default'.
+            channels (Optional[List[str]]): A list of channels to include in the report. Defaults to None.
+
+        Returns:
+            Dict[str, Any]: The compiled report.
         '''
         with self.get_report_lock:
             return self.get_report(report_type, channels)
 
     def get_report(self,
-                   report_type: str = 'default',
-                   channels: Optional[List[str]] = None) -> Dict[str, Any]:
+                report_type: str = 'default',
+                channels: Optional[List[str]] = None) -> Dict[str, Any]:
+        '''
+        Compile a telemetry report based on the specified report type and channels.
+
+        This function generates a report based on the report type. It can compile a default report,
+        a device report, or both.
+
+        Args:
+            report_type (str): The type of report to generate. Defaults to 'default'.
+            channels (Optional[List[str]]): A list of channels to include in the report. Defaults to None.
+
+        Returns:
+            Dict[str, Any]: The compiled report.
+        '''
         if report_type == 'default':
             return self.compile_report(channels=channels)
         elif report_type == 'device':
@@ -2574,6 +2597,15 @@ Please consider enabling the telemetry module with 'ceph telemetry on'.'''
         return {}
 
     def self_test(self) -> None:
+        '''
+        Perform a self-test to ensure the telemetry module is functioning correctly.
+
+        This function opts in to all collections, compiles a report, and checks if the report is not empty
+        and contains a 'report_id'. If any of these checks fail, it raises a RuntimeError.
+        
+        Raises:
+            RuntimeError: If the report is empty or does not contain 'report_id'.
+        '''
         self.opt_in_all_collections()
         report = self.compile_report(channels=ALL_CHANNELS)
         if len(report) == 0:
@@ -2583,10 +2615,21 @@ Please consider enabling the telemetry module with 'ceph telemetry on'.'''
             raise RuntimeError('report_id not found in report')
 
     def shutdown(self) -> None:
+        '''
+        Shutdown the telemetry module.
+
+        This function sets the run flag to False and triggers the event to stop the telemetry module.
+        '''
         self.run = False
         self.event.set()
 
     def refresh_health_checks(self) -> None:
+        '''
+        Refresh the health checks for the telemetry module.
+
+        This function updates the health checks based on the current state of the telemetry module.
+        If telemetry is enabled and the user needs to re-opt-in, it adds a warning to the health checks.
+        '''
         health_checks = {}
         # TODO do we want to nag also in case the user is not opted-in?
         if self.enabled and self.should_nag():
