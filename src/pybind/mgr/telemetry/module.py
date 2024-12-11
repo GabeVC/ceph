@@ -746,6 +746,56 @@ class Module(MgrModule):
                 params = osd_data['queue_params']
                 self.assertIn('osd_wpq_high_priority_weight', params)
                 self.assertIn('osd_wpq_medium_priority_weight', params)
+     def test_invalid_queue_type(self):
+        """Test handling of invalid queue types"""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = Mock(
+                stdout='invalid_queue_type\n',
+                stderr='',
+                returncode=0
+            )
+            
+            result = self.module.gather_osd_op_queue_values()
+            
+            # Verify warning was logged
+            self.module.log.warning.assert_called()
+            
+            # Verify queue type was still recorded despite being invalid
+            for osd_id in range(3):
+                osd_data = result['osd_op_queues'][f'osd_{osd_id}']
+                self.assertEqual(osd_data['queue_type'], 'invalid_queue_type')
+
+    def test_performance_metrics(self):
+        """Test collection of performance metrics"""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = Mock(
+                stdout='mclock_client\n',
+                stderr='',
+                returncode=0
+            )
+            
+            result = self.module.gather_osd_op_queue_values()
+            
+            # Verify performance metrics structure
+            for osd_id in range(3):
+                metrics = result['performance_metrics'][f'osd_{osd_id}']
+                self.assertIn('queue_length', metrics)
+                self.assertIn('average_wait_time', metrics)
+                self.assertIn('throughput', metrics)
+                self.assertIn('rejected_ops', metrics)
+
+    def test_empty_osd_list(self):
+        """Test behavior when no OSDs are present"""
+        self.module.get_osd_list.return_value = []
+        
+        result = self.module.gather_osd_op_queue_values()
+        
+        # Verify empty result structure
+        self.assertEqual(len(result['osd_op_queues']), 0)
+        self.assertEqual(result['collection_metadata']['total_osds'], 0)
+        self.assertEqual(result['collection_metadata']['success_count'], 0)
+        self.assertEqual(result['collection_metadata']['failure_count'], 0)
+        self.assertEqual(result['collection_metadata']['collection_rate'], 0)
             
     def gather_osd_memory_target_values(self, osd_id: int) -> Dict[str, Any]:
         self.log.debug("Collecting osd_memory_target values for all OSDs")
