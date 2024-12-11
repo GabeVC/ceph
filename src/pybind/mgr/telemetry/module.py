@@ -687,6 +687,65 @@ class Module(MgrModule):
             failed_osd = result['osd_op_queues']['osd_1']
             self.assertEqual(failed_osd['collection_status'], 'error')
             self.assertIn('error_message', failed_osd)
+    def test_timeout_handling(self):
+        """Test handling of timeout errors"""
+        with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('cmd', 10)):
+            result = self.module.gather_osd_op_queue_values()
+            
+            # Verify all collections failed due to timeout
+            metadata = result['collection_metadata']
+            self.assertEqual(metadata['success_count'], 0)
+            self.assertEqual(metadata['failure_count'], 3)
+            self.assertEqual(metadata['collection_rate'], 0.0)
+            
+            # Verify timeout status for each OSD
+            for osd_id in range(3):
+                osd_data = result['osd_op_queues'][f'osd_{osd_id}']
+                self.assertEqual(osd_data['collection_status'], 'timeout')
+
+    def test_mclock_params_collection(self):
+        """Test collection of mclock-specific parameters"""
+        def mock_subprocess_run(*args, **kwargs):
+            """Mock subprocess for mclock parameter collection"""
+            cmd = args[0]
+            if cmd[4] == 'osd_op_queue':
+                return Mock(stdout='mclock_client\n', stderr='', returncode=0)
+            elif cmd[4].startswith('osd_mclock'):
+                return Mock(stdout='100\n', stderr='', returncode=0)
+            return Mock(stdout='', stderr='', returncode=1)
+        
+        with patch('subprocess.run', side_effect=mock_subprocess_run):
+            result = self.module.gather_osd_op_queue_values()
+            
+            # Verify mclock parameters were collected
+            for osd_id in range(3):
+                osd_data = result['osd_op_queues'][f'osd_{osd_id}']
+                self.assertIn('queue_params', osd_data)
+                params = osd_data['queue_params']
+                self.assertIn('osd_mclock_max_capacity_iops', params)
+                self.assertIn('osd_mclock_profile', params)
+
+    def test_wpq_params_collection(self):
+        """Test collection of weighted priority queue parameters"""
+        def mock_subprocess_run(*args, **kwargs):
+            """Mock subprocess for WPQ parameter collection"""
+            cmd = args[0]
+            if cmd[4] == 'osd_op_queue':
+                return Mock(stdout='wpq\n', stderr='', returncode=0)
+            elif cmd[4].startswith('osd_wpq'):
+                return Mock(stdout='50\n', stderr='', returncode=0)
+            return Mock(stdout='', stderr='', returncode=1)
+        
+        with patch('subprocess.run', side_effect=mock_subprocess_run):
+            result = self.module.gather_osd_op_queue_values()
+            
+            # Verify WPQ parameters were collected
+            for osd_id in range(3):
+                osd_data = result['osd_op_queues'][f'osd_{osd_id}']
+                self.assertIn('queue_params', osd_data)
+                params = osd_data['queue_params']
+                self.assertIn('osd_wpq_high_priority_weight', params)
+                self.assertIn('osd_wpq_medium_priority_weight', params)
             
     def gather_osd_memory_target_values(self, osd_id: int) -> Dict[str, Any]:
         self.log.debug("Collecting osd_memory_target values for all OSDs")
