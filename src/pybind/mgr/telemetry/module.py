@@ -402,22 +402,23 @@ class Module(MgrModule):
     
     def gather_osd_op_queue_values(self) -> Dict[str, Any]:
         """
-        Collects detailed OSD operation queue settings and metrics for all OSDs in the cluster.
-        
-        This enhanced implementation includes:
-        - Comprehensive error handling and logging
-        - Detailed queue configuration collection
-        - Performance metrics gathering
-        - Historical data tracking
-        - Queue type validation
-        
+        Collects comprehensive OSD operation queue settings and metrics for all OSDs.
+
         Returns:
             Dict[str, Any]: A dictionary containing:
-                - Basic queue settings for each OSD
-                - Extended queue parameteawdrs
-                - Collection metadata
-                - Performance metrics
-                - Historical trends
+                - osd_op_queues: Dict of OSD queue configurations
+                - collection_metadata: Collection statistics and metadata
+                - performance_metrics: Queue performance data
+                - historical_data: Time-series data if available
+
+        Raises:
+            RuntimeError: If unable to get OSD list
+            TimeoutError: If collection timeouts occur
+            
+        Example:
+            >>> result = module.gather_osd_op_queue_values()
+            >>> print(result['osd_op_queues']['osd_0']['queue_type'])
+            'mclock_client'
         """
         self.log.debug("Starting comprehensive OSD operation queue collection")
         
@@ -509,7 +510,24 @@ class Module(MgrModule):
         return result
     
     def _get_osd_queue_config(self, osd_id: int) -> Optional[str]:
-        """Get basic queue configuration for an OSD"""
+        """
+        Retrieves basic queue configuration for a specific OSD.
+
+        Args:
+            osd_id: Integer identifier of the OSD
+
+        Returns:
+            Optional[str]: Queue type if found, None otherwise
+
+        Raises:
+            subprocess.TimeoutExpired: If command times out
+            subprocess.CalledProcessError: If command fails
+            
+        Example:
+            >>> config = module._get_osd_queue_config(0)
+            >>> print(config)
+            'mclock_client'
+        """
         cmd = ['ceph', 'config', 'get', f'osd.{osd_id}', 'osd_op_queue']
         try:
             output = subprocess.run(
@@ -525,7 +543,24 @@ class Module(MgrModule):
             return None
 
     def _get_mclock_params(self, osd_id: int) -> Dict[str, Any]:
-        """Collect mclock specific parameters"""
+        """
+        Collects mclock-specific queue parameters for an OSD.
+
+        Args:
+            osd_id: Integer identifier of the OSD
+
+        Returns:
+            Dict[str, Any]: Dictionary of mclock parameters including:
+                - osd_mclock_max_capacity_iops
+                - osd_mclock_min_cost
+                - osd_mclock_max_capacity_bytes_per_sec
+                - osd_mclock_profile
+
+        Example:
+            >>> params = module._get_mclock_params(0)
+            >>> print(params['osd_mclock_profile'])
+            'high_client_ops'
+        """
         params = {}
         mclock_params = [
             'osd_mclock_max_capacity_iops',
@@ -546,7 +581,23 @@ class Module(MgrModule):
         return params
 
     def _get_wpq_params(self, osd_id: int) -> Dict[str, Any]:
-        """Collect weighted priority queue specific parameters"""
+        """
+        Collects weighted priority queue parameters for an OSD.
+
+        Args:
+            osd_id: Integer identifier of the OSD
+
+        Returns:
+            Dict[str, Any]: Dictionary of WPQ parameters including:
+                - osd_wpq_high_priority_weight
+                - osd_wpq_medium_priority_weight
+                - osd_wpq_low_priority_weight
+
+        Example:
+            >>> params = module._get_wpq_params(0)
+            >>> print(params['osd_wpq_high_priority_weight'])
+            '100'
+        """
         params = {}
         wpq_params = [
             'osd_wpq_high_priority_weight',
